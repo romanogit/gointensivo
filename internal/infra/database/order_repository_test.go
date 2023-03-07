@@ -2,105 +2,50 @@ package database
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/stretchr/testify/assert"
+	"github.com/romanogit/gointensivo/internal/entity"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/romanogit/gointensivo/internal/entity"
+	// sqlite3 driver
+	_ "github.com/mattn/go-sqlite3"
 )
 
-type OrderRepositorySuite struct {
+type OrderRepositoryTestSuite struct {
 	suite.Suite
-	DB        *sql.DB
-	OrderRepo *OrderRepository
+	Db *sql.DB
 }
 
-func (suite *OrderRepositorySuite) SetupTest() {
-	// create database
-	var err error
-	suite.DB, err = sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		fmt.Printf("failed to create database: %v\n", err)
-		os.Exit(1)
-	}
-
-	// create orders table
-	_, err = suite.DB.Exec("CREATE TABLE Orders (id INTEGER PRIMARY KEY, price INTEGER, tax INTEGER, final_price INTEGER)")
-	if err != nil {
-		fmt.Printf("failed to create table: %v\n", err)
-		os.Exit(1)
-	}
-
-	suite.OrderRepo = NewOrderRepository(suite.DB)
+func (suite *OrderRepositoryTestSuite) SetupSuite() {
+	db, err := sql.Open("sqlite3", ":memory:")
+	suite.NoError(err)
+	db.Exec("CREATE TABLE orders (id varchar(255) NOT NULL, price float NOT NULL, tax float NOT NULL, final_price float NOT NULL, PRIMARY KEY (id))")
+	suite.Db = db
 }
 
-func (suite *OrderRepositorySuite) TearDownTest() {
-	// remove orders table
-	_, err := suite.DB.Exec("DROP TABLE IF EXISTS Orders")
-	if err != nil {
-		fmt.Printf("failed to drop table: %v\n", err)
-		os.Exit(1)
-	}
-
-	suite.DB.Close()
+func (suite *OrderRepositoryTestSuite) TearDownSuite() {
+	suite.Db.Close()
 }
 
-func (suite *OrderRepositorySuite) TestOrderRepository_Save() {
-	order := &entity.Order{
-		ID:         "1",
-		Price:      100,
-		Tax:        10,
-		FinalPrice: 110,
-	}
-
-	err := suite.OrderRepo.Save(order)
-	assert.NoError(suite.T(), err)
-
-	var count int
-	err = suite.DB.QueryRow("SELECT COUNT(1) FROM Orders").Scan(&count)
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), 1, count)
+func TestSuite(t *testing.T) {
+	suite.Run(t, new(OrderRepositoryTestSuite))
 }
 
-func (suite *OrderRepositorySuite) TestOrderRepository_GetTotal() {
-	var total int
-	var err error
+func (suite *OrderRepositoryTestSuite) TestSavingOrder() {
+	order, err := entity.NewOrder("123", 10.0, 1.0)
+	suite.NoError(err)
+	suite.NoError(order.CalculateFinalPrice())
+	repo := NewOrderRepository(suite.Db)
+	err = repo.Save(order)
+	suite.NoError(err)
 
-	// test with empty table
-	total, err = suite.OrderRepo.GetTotal()
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), 0, total)
+	var orderResult entity.Order
+	err = suite.Db.QueryRow("select id, price, tax, final_price from orders where id = ?",
+		order.ID).Scan(&orderResult.ID, &orderResult.Price, &orderResult.Tax, &orderResult.FinalPrice)
 
-	// test with non-empty table
-	order1 := &entity.Order{
-		ID:         "1",
-		Price:      100,
-		Tax:        10,
-		FinalPrice: 110,
-	}
-
-	order2 := &entity.Order{
-		ID:         "2",
-		Price:      200,
-		Tax:        20,
-		FinalPrice: 220,
-	}
-
-	err = suite.OrderRepo.Save(order1)
-	assert.NoError(suite.T(), err)
-
-	err = suite.OrderRepo.Save(order2)
-	assert.NoError(suite.T(), err)
-
-	total, err = suite.OrderRepo.GetTotal()
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), 2, total)
-}
-
-func TestOrderRepositorySuite(t *testing.T) {
-	suite.Run(t, new(OrderRepositorySuite))
+	suite.NoError(err)
+	suite.Equal(order.ID, orderResult.ID)
+	suite.Equal(order.Price, orderResult.Price)
+	suite.Equal(order.Tax, orderResult.Tax)
+	suite.Equal(order.FinalPrice, orderResult.FinalPrice)
 }
